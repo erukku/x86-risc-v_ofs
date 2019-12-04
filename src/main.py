@@ -108,6 +108,7 @@ def iread(img, dp, DE, off):
     
 def iunlink(img, rp, path):
     name = ""
+    zero = 0x00
     while True:
         assert path != "" and rp != None and int.from_bytes(rp[:2],"little") == T_DIR,"hah"
         path = skipelem(path,name)
@@ -119,6 +120,8 @@ def iunlink(img, rp, path):
             if name == "." or name == "..":
                 os.error()
                 return -1
+            if int.from_bytes(ip[:2],"little") == T_DIR and dlookup(img,ip,"..",None) == rp:
+                rp[]
             
 
 def dlookup(img, dp,name,offp):
