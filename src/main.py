@@ -404,11 +404,12 @@ def o_put(img,args):
                 return -1
             itruncate(img, ip,addr, 0)
         da = 0
-        for i in range(0,MAXFILE,BUFSIZE):
+        addr = (IB + addr//IPB) * 1024 + (addr % IPB) * 64
+        for i in range(0,MAXFILE):
             ii = i//BUFSIZE
-            addr = bmap(img,ip,addr,ii)
+            iaddr = bmap(img,ip,addr,ii)
             leng = min(BSIZE,len(s))
-            img[addr * BSIZE:addr * BSIZE + leng] = s[:leng].encode()
+            img[iaddr * BSIZE:iaddr * BSIZE + leng] = s[:leng].encode()
             img[addr+8:addr+12] = (int.from_bytes(img[addr+8:addr+12],"little") + leng).to_bytes(4,"little")
             s = s[leng:]
             if f == "":
@@ -450,33 +451,29 @@ def ofs():
     cmd = args[2]
 
 
-    #try:
-    img_fd = os.open(img_file,os.O_RDWR)
+    try:
+        img_fd = os.open(img_file,os.O_RDWR)
+        
+        if img_fd < 0:
+            exit()
+        img_stat = os.fstat(img_fd)
+        img_size = img_stat.st_size
+
+        img = mmap.mmap(img_fd,img_size,mmap.MAP_SHARED,mmap.PROT_READ|mmap.PROT_WRITE,0)
+        iii = img[1024:1028]
+        if hex(int.from_bytes(iii,"little")) != "0x10203040":
+            os.error()
+        root_inode = iget(img,root_inode_number)
+        
+        
+        for cm in command:
+            if cm[0] == cmd:
+                end = handler(eval(cm[1]),img,args[3:])
     
-    if img_fd < 0:
-        exit()
-    img_stat = os.fstat(img_fd)
-    img_size = img_stat.st_size
-
-    img = mmap.mmap(img_fd,img_size,mmap.MAP_SHARED,mmap.PROT_READ|mmap.PROT_WRITE,0)
-    iii = img[1024:1028]
-    if hex(int.from_bytes(iii,"little")) != "0x10203040":
-        os.error()
-    root_inode = iget(img,root_inode_number)
-    
-    
-    for cm in command:
-        if cm[0] == cmd:
-            end = handler(eval(cm[1]),img,args[3:])
-
-    #else:
-
-
-    """            
     except Exception:
         print(sys.exc_info()[0])
         exit()
-    """
+
     os.close(img_fd)
     exit(end)
 
