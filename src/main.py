@@ -44,13 +44,9 @@ def divceil(x,y):
     return (x + y - 1) // y
 
 
-
-
-
 def bfree(img,b):
     bi = b % BPB
     m = 1 << (bi % 8)
-    #if ((bp[bi / 8] & m) == 0):
     
     img[((b)//BPB + BB)*BSIZE + (bi // 8):((b)//BPB + BB)*BSIZE + (bi // 8)+1] = (int.from_bytes(img[((b)//BPB + BB)*BSIZE + (bi // 8):((b)//BPB + BB)*BSIZE + (bi // 8)+1],"little") & ~m).to_bytes(1,'little')
     
@@ -80,7 +76,6 @@ def bmap(img,ip,baddr,n):
         if dp == 0:
             dp = balloc(img);
             img[iaddr*BSIZE+k*4:iaddr*BSIZE+(k+1)*4] = dp.to_bytes(4,"little")
-
         return dp
 
 def balloc(img):
@@ -340,6 +335,16 @@ def dlookup(img, dp,daddr,name,offp):
     return None,None,None
 
 
+def typename(type):
+    if type == T_DIR:
+        return "T_DIR"
+    elif type == T_FILE:
+        return "T_FILE"
+    elif type == T_DEV:
+        return "T_DEV"
+    else:
+        return "Unkown"
+
 
 def o_ls(img,args):
     if len(args) != 1:
@@ -383,12 +388,6 @@ def o_get(img,args):
                 st += de[j:16+j].decode().replace('\x00',"")
         f.write(st)
     return 0
-
-
-
-
-
-
 
 
 
@@ -462,25 +461,42 @@ def o_diskinfo(img,args):
         elif type == T_DEV:
             n_devs += 1
 
-    print("# of used inodes: {0} (dirs: {1}, files: {2}, devs: {3})".format(n_dirs + n_files + n_devs, n_dirs, n_files, n_devs)
-
+    print("# of used inodes: {0} (dirs: {1}, files: {2}, devs: {3})".format(n_dirs + n_files + n_devs, n_dirs, n_files, n_devs))
     return 0;
 
+def emptydir(img,dp):
+    nent = 0
+    for i in range(0,int.from_bytes(dp[8:12],"little"),SIZE_DE):
+        if dp[12 + (i) * 4: + 12 + (i)+1 * 4] != 0:
+            nent += 1
+    return (nent == 2)
 
-def typename(type):
-    if type == T_DIR:
-        return "T_DIR"
-    elif type == T_FILE:
-        return "T_FILE"
-    elif type == T_DEV:
-        return "T_DEV"
-    else:
-        return "Unkown"
+def splitpath(path, dirbuf, size):
+    s = path
+    t = path
+    while not path == None:
+        for i in range(len(path)):
+            if path[i] != "/":
+                path = path[i:]
+                break
+        else:
+            path = None
+        s = path
+        for i in range(len(path)):
+            if path[i] != "/":
+                path = path[i:]
+                break
+        else:
+            path = None
+    
+    if (dirbuf != None):
+        dirbuf = t[:len(t)-len(s)]
+    return s,dirbuf;
 
 def o_info(img,args):
     path = args[0]
     root_inode = iget(img,root_inode_number)
-    addr,ip = ilookup(img,root_inode,(IB + root_inode_number//IPB) * 1024 + (root_inode_number % IPB) * 64,path)
+    addr,ip = ilookup(img,root_inode,root_inode_number,path)
     if ip == None:
         os.error()
         return 1
@@ -516,7 +532,7 @@ def o_rm(img,args):
         return 1
     path = args[0]
     root_inode = iget(img,root_inode_number)
-    addr,ip = ilookup(img,root_inode,(IB + root_inode_number//IPB) * 1024 + (root_inode_number % IPB) * 64,path)
+    addr,ip = ilookup(img,root_inode,root_inode_number,path)
 
     if ip == None:
         os.error()
@@ -528,9 +544,98 @@ def o_rm(img,args):
         os.error()
         return 1
     return 0
+
+
+def o_ln(img,args):
+    if len(args) != 2:
+        os.error()
+        return 1
+    frompath = args[0]
+    topath = args[1]
+
+    addr,ip = ilookup(img,root_inode,root_inode_number,frompath)
+    if ip == None:
+        os.error()
+        return 1
+    if int.from_bytes(ip[:2],"little") != T_FILE:
+        os.error()
+        return 1
+
+    ddir = "";
+    dname,ddir = splitpath(topath, ddir, BUFSIZE)
+    daddr,dp = ilookup(img, root_inode,root_inode_number,ddir)
+    if (dp == None):
+        os.error()
+        return 1
+    if (int.from_bytes(dp[:2],"little") != T_DIR):
+        os.error()
+        return 1
+    if (dname == None):
+        dname,ddd = splitpath(frompath, None, 0)
+        ddaddr,ddp = dlookup(img, dp, daddr, dname, None)
+        if (ddp == None):
+            os.error()
+            return 1
+    else:
+        addr,ip = dlookup(img, dp,daddr, dname, None)
+        if (ip != None):
+            if (int.from_bytes(dp[:2],"little") != T_DIR):
+                os.error()
+                return 1
+            dname,ddd = splitpath(frompath, None, 0)
+            dp = ip
+            daddr = addr
+    if (daddent(img, dp,daddr,dname, ip) < 0):
+        os.error()
+        return 1
+    return 0
     
 
 
+
+def o_mkdir(img,args):
+    if len(args) != 1:
+        os.error()
+        return 1
+    path = args[0]
+
+    addr,ip = ilookup(img,root_inode,root_inode_number,path)
+
+    if ip != None:
+        os.error()
+        return 1
+    
+    addr,ip = icreat(img, root_inode,root_inode_number,path, T_DIR, None)
+    if ip == None:
+        os.error()
+        return 1
+
+    return 0
+
+def o_rmdir(img,args):
+    if len(args) != 1:
+        os.error()
+        return 1
+    
+    path = args[0]
+
+    addr,ip = ilookup(img,root_inode,root_inode_number,path)
+
+    if ip == None:
+        os.error()
+        return 1
+    
+    if int.from_bytes(ip[:2],"little") != T_DIR:
+        os.error()
+        return 1
+
+    if not emptydir(img,ip):
+        os.error()
+        return 1
+    if iunlink(img, addr, path) < 0:
+        os.error()
+        return 1
+    return 0
 
 
 def ofs():
