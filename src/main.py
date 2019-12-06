@@ -106,7 +106,7 @@ def daddent(img, dp, daddr,name,addr):
                 flag = True
                 break
             if(name.replace('\x00',"") == de[2+j:16+j].decode().replace('\x00',"")):
-                os.error()
+                os.error("daddent: {0}: exists".format(name))
                 return -1;
         if flag:
             break
@@ -133,13 +133,13 @@ def icreat(img, rp, raddr,path, type, dpp):
         assert path != "" and rp != None and int.from_bytes(rp[:2],"little") == T_DIR,"h"
         path,name = skipelem(path, name)
         if (name.replace('\x00',"") == ""):
-            os.error()
+            os.error("icreat: {0}: empty file name".format(name))
             return None,None
 
         dnum,addr,ip = dlookup(img, rp, raddr,name, None)
         if path == None:
             if ip != None:
-                os.error()
+                os.error("icreat: {0}: file exists".format(name))
                 return None,None
 
             addr,ip = ialloc(img, type)
@@ -153,7 +153,7 @@ def icreat(img, rp, raddr,path, type, dpp):
                 dpp = rp
             return addr,ip
         if ip == None or int.from_bytes(ip[:2],"little") != T_DIR:
-            os.error()
+            os.error("icreat: {0}: no such directory".format(name))
             return None,None
         rp = ip
         raddr = addr
@@ -298,15 +298,15 @@ def iunlink(img, addrs, path):
         assert path != "" and rp != None and int.from_bytes(rp[:2],"little") == T_DIR,"hah"
         path,name = skipelem(path,name)
         if name == "":
-            os.error()
+            os.error("iunlink: empty file name")
             return -1
         dnum,addr,ip = dlookup(img,rp,addrs,name,None)
         if ip != None and path == None:
             if name == "." or name == "..":
-                os.error()
+                os.error("iunlink: cannot unlink \".\" or \"..\"")
                 return -1
             if iwrite(img,rp,name,dnum) != 0:
-                os.error()
+                os.error("iunlink: write error")
             if int.from_bytes(ip[:2],"little") == T_DIR and dlookup(img,ip,addr,"..",None)[2] == rp:
                 img[(IB + addrs//IPB) * 1024 + (addrs % IPB) * 64 + 6:(IB + addrs//IPB) * 1024 + (addrs % IPB) * 64 + 8] = (int.from_bytes(rp[6:8],"little") - 1).to_bytes(2, 'little')
                 rp = iget(img,addrs)
@@ -350,12 +350,13 @@ def typename(type):
 
 def o_ls(img,args):
     if len(args) != 1:
+        print("usage: img_file ls path")
         return 1
     path = args[0]
     root_inodes = iget(img,root_inode_number)
     addr,ip = ilookup(img, root_inodes, root_inode_number,path)
     if ip == None:
-        os.error()
+        os.error("ls: {0}: no such file or directory".format(path))
         return 1
     if int.from_bytes(ip[:2],"little") == T_DIR:
         for i in range(0,int.from_bytes(ip[8:12],"little"),BSIZE):
@@ -374,7 +375,7 @@ def o_ls(img,args):
 
 def o_get(img,args):
     if len(args) != 2:
-        os.error()
+        print("usage: img_file get innerpath outerpath")
         return 1
     fspath = args[0]
     outpath = args[1]
@@ -394,7 +395,7 @@ def o_get(img,args):
 
 def o_put(img,args):
     if len(args) != 2:
-        os.error()
+        print("usage: img_file put outerpath innerpath")
         return 1
     fspath = args[1]
     inpath = args[0]
@@ -428,7 +429,7 @@ def o_put(img,args):
 
 def o_diskinfo(img,args):
     if len(args) != 0:
-        os.error()
+        print("usage: img_file diskinfo")
         return 1
     
     root_inode = iget(img,root_inode_number)
@@ -501,7 +502,7 @@ def o_info(img,args):
     root_inode = iget(img,root_inode_number)
     addr,ip = ilookup(img,root_inode,root_inode_number,path)
     if ip == None:
-        os.error()
+        print("usage: img_file info path")
         return 1
     print("inode: {0}".format(addr))
     print("type: {0} ({1})".format(int.from_bytes(ip[:2],"little"), typename(int.from_bytes(ip[:2],"little"))))
@@ -531,64 +532,64 @@ def o_info(img,args):
         return 0
 def o_rm(img,args):
     if len(args) != 1:
-        os.error()
+        print("usage: img_file rm path")
         return 1
     path = args[0]
     root_inode = iget(img,root_inode_number)
     addr,ip = ilookup(img,root_inode,root_inode_number,path)
 
     if ip == None:
-        os.error()
+        os.error("rm: {0}: no such file or directory".format(path))
         return 1
     if int.from_bytes(ip[:2],"little") == T_DIR:
-        os.error()
+        os.error("rm: {0}: a directory".format(path))
         return 1
     if iunlink(img, root_inode_number, path) < 0:
-        os.error()
+        os.error("rm: {0}: cannot unlink".format(path))
         return 1
     return 0
 
 
 def o_ln(img,args):
     if len(args) != 2:
-        os.error()
+        print("usage: img_file ln path path")
         return 1
     frompath = args[0]
     topath = args[1]
     root_inode = iget(img,root_inode_number)
     addr,ip = ilookup(img,root_inode,root_inode_number,frompath)
     if ip == None:
-        os.error()
+        os.error("ln: {0}: no such file or directory".format(frompath))
         return 1
     if int.from_bytes(ip[:2],"little") != T_FILE:
-        os.error()
+        os.error("ln: {0}: is a directory or a device".format(frompath))
         return 1
     ddir = "";
     dname,ddir = splitpath(topath, ddir, BUFSIZE)
     daddr,dp = ilookup(img, root_inode,root_inode_number,ddir)
     if (dp == None):
-        os.error()
+        os.error("ln: {0}: no such directory".format(ddir))
         return 1
     if (int.from_bytes(dp[:2],"little") != T_DIR):
-        os.error()
+        os.error("ln: {0}: not a directory".format(ddir))
         return 1
     if (dname == None):
         dname,ddd = splitpath(frompath, None, 0)
         ddaddr,ddp = dlookup(img, dp, daddr, dname, None)
         if (ddp == None):
-            os.error()
+            os.error("ln: {0}/{1}: file exists".format(ddir, dname))
             return 1
     else:
         nn,ddr,ip = dlookup(img, dp,daddr, dname, None)
         if (ip != None):
             if (int.from_bytes(dp[:2],"little") != T_DIR):
-                os.error()
+                os.error("ln: {0}/{1}: file exists".format(ddir, dname))
                 return 1
             dname,ddd = splitpath(frompath, None, 0)
             dp = ip
             daddr = ddr
     if (daddent(img, dp,daddr,dname, addr) < 0):
-        os.error()
+        os.error("ln: {0}/{1}: cannot create a link".format(ddir, dname))
         return 1
     return 0
     
@@ -597,7 +598,7 @@ def o_ln(img,args):
 
 def o_mkdir(img,args):
     if len(args) != 1:
-        os.error()
+        print("usage: img_file mkdir path")
         return 1
     path = args[0]
     
@@ -605,19 +606,19 @@ def o_mkdir(img,args):
     addr,ip = ilookup(img,root_inode,root_inode_number,path)
     
     if ip != None:
-        os.error()
+        os.error("mkdir: {0}: file exists".format(path))
         return 1
     
     addr,ip = icreat(img, root_inode,root_inode_number,path, T_DIR, None)
     if ip == None:
-        os.error()
+        os.error("mkdir: {0}: cannot create".format(path))
         return 1
 
     return 0
 
 def o_rmdir(img,args):
     if len(args) != 1:
-        os.error()
+        print("usage: img_file rmdir path")
         return 1
     
     path = args[0]
@@ -625,18 +626,18 @@ def o_rmdir(img,args):
     addr,ip = ilookup(img,root_inode,root_inode_number,path)
 
     if ip == None:
-        os.error()
+        os.error("rmdir: {0}: no such file or directory".format(path))
         return 1
     
     if int.from_bytes(ip[:2],"little") != T_DIR:
-        os.error()
+        os.error("rmdir: {0}: not a directory".format(path))
         return 1
 
     if not emptydir(img,ip):
-        os.error()
+        os.error("rmdir: {0}: non-empty directory".format(path))
         return 1
     if iunlink(img, addr, path) < 0:
-        os.error()
+        os.error("rmdir: {0}: cannot unlink".format(path))
         return 1
     return 0
 
@@ -646,6 +647,7 @@ def ofs():
     args = sys.argv
     progname = args[0]
     if len(args) < 3 or len(args) > 6:
+        os.error("fail usage")
         exit()
 
     img_file = args[1]
@@ -655,14 +657,14 @@ def ofs():
         img_fd = os.open(img_file,os.O_RDWR)
         
         if img_fd < 0:
-            exit()
+            os.error("nothing")
         img_stat = os.fstat(img_fd)
         img_size = img_stat.st_size
 
         img = mmap.mmap(img_fd,img_size,mmap.MAP_SHARED,mmap.PROT_READ|mmap.PROT_WRITE,0)
         iii = img[1024:1028]
         if hex(int.from_bytes(iii,"little")) != "0x10203040":
-            os.error()
+            os.error(": invalid magic number:")
         root_inode = iget(img,root_inode_number)
 
         global N,Nl,Ni,Nm,Nd,ninodes
