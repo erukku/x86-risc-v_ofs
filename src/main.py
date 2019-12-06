@@ -12,7 +12,7 @@ BPB = (BSIZE*8)
 ninodes = 200
 root_inode_number = 1
 #fatal_exception_buf
-command = [["ls","o_ls"],["get","o_get"],["put","o_put"],["rm","o_rm"],["info","o_info"],["diskinfo","o_diskinfo"]]
+command = [["ls","o_ls"],["get","o_get"],["put","o_put"],["rm","o_rm"],["info","o_info"],["diskinfo","o_diskinfo"],["ln","o_ln"],["mkdir","o_mkdir"],["rmdir","o_rmdir"]]
 DIRSIZ = 14
 
 SIZE_DE = 16
@@ -65,7 +65,7 @@ def bmap(img,ip,baddr,n):
     else:
         k = n - NDIRECT
         if(k >= NINDIRECT):
-            os.error()
+            os.error("invalid index number")
         iaddr = int.from_bytes(ip[12+4*NDIRECT:12+4*(NDIRECT+1)],"little")
 
         if iaddr == 0:
@@ -79,9 +79,9 @@ def bmap(img,ip,baddr,n):
         return dp
 
 def balloc(img):
-    for i in range(0,1000,BPB):
+    for i in range(0,N,BPB):
         bb = img[(BB+i)*BSIZE:(BB+i+1)*BSIZE]
-        for ii in range(0,1000-i):
+        for ii in range(0,N-i):
             bbb = bb[ii//8:ii//8 + 1]
             if not ii < BPB:
                 break
@@ -97,27 +97,27 @@ def balloc(img):
 def daddent(img, dp, daddr,name,addr):
     flag = False
     addrs = 0
-    for i in range(0,int.from_bytes(dp[8:12],"little"),SIZE_DE):
+    j = 0
+    daddr = (IB + daddr//IPB) * 1024 + (daddr % IPB) * 64
+    for i in range(0,int.from_bytes(dp[8:12],"little")+SIZE_DE-1,SIZE_DE):
         addrs,de = iread(img, dp, daddr,SIZE_DE, i)
         for j in range(0,BSIZE,SIZE_DE):
             if int.from_bytes(de[j:2+j],"little") == 0:
                 flag = True
                 break
-            if(name == de[2+j:16+j].decode().replace('\x00',"")):
+            if(name.replace('\x00',"") == de[2+j:16+j].decode().replace('\x00',"")):
                 os.error()
                 return -1;
         if flag:
             break
     for i in range(14-len(name)):
         name += "\0"
-
     j //= SIZE_DE
-    daddr = (IB + daddr//IPB) * 1024 + (daddr % IPB) * 64
     img[daddr+8:daddr+12] = (int.from_bytes(img[daddr+8:daddr+12],"little") + 16).to_bytes(4,"little")
     img[addrs * BSIZE + j*SIZE_DE+2:addrs * BSIZE + j*SIZE_DE+16] = name.encode()
     img[addrs * BSIZE + j*SIZE_DE:addrs * BSIZE + j*SIZE_DE+2] = addr.to_bytes(2,"little")
-
-    if name != ".":
+    
+    if name.replace('\x00',"") != ".":
         addr = (IB + addr//IPB) * 1024 + (addr % IPB) * 64
         img[addr+6:addr+8] = (int.from_bytes(img[addr+6:addr+8],"little")+1).to_bytes(2,"little")
     return 0
@@ -132,8 +132,7 @@ def icreat(img, rp, raddr,path, type, dpp):
     while True:
         assert path != "" and rp != None and int.from_bytes(rp[:2],"little") == T_DIR,"h"
         path,name = skipelem(path, name)
-        print(path,name)
-        if (name == ""):
+        if (name.replace('\x00',"") == ""):
             os.error()
             return None,None
 
@@ -146,8 +145,10 @@ def icreat(img, rp, raddr,path, type, dpp):
             addr,ip = ialloc(img, type)
             daddent(img, rp, raddr,name, addr)
             if (int.from_bytes(ip[:2],"little") == T_DIR):
-                daddent(img, ip, addr,".", ip)
-                daddent(img, ip, addr,"..", rp)
+                dnum,addr,ip = dlookup(img, rp, raddr,name, None)
+                daddent(img, ip, addr,".", addr)
+                dnum,addr,ip = dlookup(img, rp, raddr,name, None)
+                daddent(img, ip, addr,"..", raddr)
             if (dpp != None):
                 dpp = rp
             return addr,ip
@@ -155,6 +156,7 @@ def icreat(img, rp, raddr,path, type, dpp):
             os.error()
             return None,None
         rp = ip
+        raddr = addr
 
 def ialloc(img,type):
     for i in range(1,ninodes):
@@ -167,7 +169,7 @@ def ialloc(img,type):
     return None
 
 def iget(img,inum):
-    if 0 < inum and inum < 200:
+    if 0 < inum and inum < ninodes:
         gg = img[(IB + inum//IPB) * 1024 + (inum % IPB) * 64:(IB + inum//IPB) * 1024 + (inum % IPB) * 64 + 64]
         return gg
     return None
@@ -270,7 +272,7 @@ def iread(img, dp, daddr,DE, off):
     """
     if off + DE > size:
         DE = size - off
-    addr = bmap(img,dp,daddr,off//DE)
+    addr = bmap(img,dp,daddr,off//SIZE_DE)
     de = img[addr * BSIZE:addr * BSIZE + BSIZE]
     return addr,de
 
@@ -279,7 +281,7 @@ def iwrite(img,dp,name,off):
         return -1
     de = img[off * BSIZE:(off+1) * BSIZE]
     for j in range(0,BSIZE,SIZE_DE):
-        if(name == de[2+j:16+j].decode().replace('\x00',"")):
+        if(name.replace('\x00',"") == de[2+j:16+j].decode().replace('\x00',"")):
             a = 0
             j //= SIZE_DE
             img[off * BSIZE + j*SIZE_DE:off * BSIZE + (j+1)*SIZE_DE] = a.to_bytes(16, 'little')
@@ -328,7 +330,7 @@ def dlookup(img, dp,daddr,name,offp):
     for i in range(0,size,BSIZE):
         addr,de = iread(img, dp, daddr,SIZE_DE, i)
         for j in range(0,BSIZE,SIZE_DE):
-            if(name == de[2+j:16+j].decode().replace('\x00',"")):
+            if(name.replace('\x00',"") == de[2+j:16+j].decode().replace('\x00',"")):
                 if offp != None:
                     offp = i
                 return addr,int.from_bytes(de[j:j+2],"little"),iget(img,int.from_bytes(de[j:j+2],"little"))
@@ -383,7 +385,6 @@ def o_get(img,args):
         st = ""
         for i in range(0,int.from_bytes(ip[8:12],"little"),SIZE_DE):
             flag,de = iread(img, ip, addr,SIZE_DE, i)
-            print(int.from_bytes(de[:2],"little"))
             for j in range(0,int.from_bytes(ip[8:12],"little"),SIZE_DE):
                 st += de[j:16+j].decode().replace('\x00',"")
         f.write(st)
@@ -430,7 +431,7 @@ def o_diskinfo(img,args):
         os.error()
         return 1
     
-    Nm = 1000 / (BSIZE * 8) + 1;
+    root_inode = iget(img,root_inode_number)
 
     print("magic: {0}".format(magicfs))
     print("total blocks: {0} ({1} bytes)".format(1000, 1000 * BSIZE))
@@ -454,13 +455,15 @@ def o_diskinfo(img,args):
     n_devs = 0;
     for i in range(1,201):
         type = iget(img,i)
+        if type == None:
+            continue
+        type = int.from_bytes(type[:2],"little")
         if type == T_DIR:
             n_dirs += 1
         elif type == T_FILE:
             n_files += 1
         elif type == T_DEV:
             n_devs += 1
-
     print("# of used inodes: {0} (dirs: {1}, files: {2}, devs: {3})".format(n_dirs + n_files + n_devs, n_dirs, n_files, n_devs))
     return 0;
 
@@ -483,7 +486,7 @@ def splitpath(path, dirbuf, size):
             path = None
         s = path
         for i in range(len(path)):
-            if path[i] != "/":
+            if path[i] == "/":
                 path = path[i:]
                 break
         else:
@@ -552,7 +555,7 @@ def o_ln(img,args):
         return 1
     frompath = args[0]
     topath = args[1]
-
+    root_inode = iget(img,root_inode_number)
     addr,ip = ilookup(img,root_inode,root_inode_number,frompath)
     if ip == None:
         os.error()
@@ -560,7 +563,6 @@ def o_ln(img,args):
     if int.from_bytes(ip[:2],"little") != T_FILE:
         os.error()
         return 1
-
     ddir = "";
     dname,ddir = splitpath(topath, ddir, BUFSIZE)
     daddr,dp = ilookup(img, root_inode,root_inode_number,ddir)
@@ -577,15 +579,15 @@ def o_ln(img,args):
             os.error()
             return 1
     else:
-        addr,ip = dlookup(img, dp,daddr, dname, None)
+        nn,ddr,ip = dlookup(img, dp,daddr, dname, None)
         if (ip != None):
             if (int.from_bytes(dp[:2],"little") != T_DIR):
                 os.error()
                 return 1
             dname,ddd = splitpath(frompath, None, 0)
             dp = ip
-            daddr = addr
-    if (daddent(img, dp,daddr,dname, ip) < 0):
+            daddr = ddr
+    if (daddent(img, dp,daddr,dname, addr) < 0):
         os.error()
         return 1
     return 0
@@ -598,9 +600,10 @@ def o_mkdir(img,args):
         os.error()
         return 1
     path = args[0]
-
+    
+    root_inode = iget(img,root_inode_number)
     addr,ip = ilookup(img,root_inode,root_inode_number,path)
-
+    
     if ip != None:
         os.error()
         return 1
@@ -618,7 +621,7 @@ def o_rmdir(img,args):
         return 1
     
     path = args[0]
-
+    root_inode = iget(img,root_inode_number)
     addr,ip = ilookup(img,root_inode,root_inode_number,path)
 
     if ip == None:
@@ -648,43 +651,41 @@ def ofs():
     img_file = args[1]
     cmd = args[2]
 
-    #try:
-    img_fd = os.open(img_file,os.O_RDWR)
-    
-    if img_fd < 0:
-        exit()
-    img_stat = os.fstat(img_fd)
-    img_size = img_stat.st_size
+    try:
+        img_fd = os.open(img_file,os.O_RDWR)
+        
+        if img_fd < 0:
+            exit()
+        img_stat = os.fstat(img_fd)
+        img_size = img_stat.st_size
 
-    img = mmap.mmap(img_fd,img_size,mmap.MAP_SHARED,mmap.PROT_READ|mmap.PROT_WRITE,0)
-    iii = img[1024:1028]
-    if hex(int.from_bytes(iii,"little")) != "0x10203040":
-        os.error()
-    root_inode = iget(img,root_inode_number)
+        img = mmap.mmap(img_fd,img_size,mmap.MAP_SHARED,mmap.PROT_READ|mmap.PROT_WRITE,0)
+        iii = img[1024:1028]
+        if hex(int.from_bytes(iii,"little")) != "0x10203040":
+            os.error()
+        root_inode = iget(img,root_inode_number)
 
-    global N,Nl,Ni,Nm,Nd,ninodes
-    global logstart,inodestart,bmapstart,datastart
+        global N,Nl,Ni,Nm,Nd,ninodes
+        global logstart,inodestart,bmapstart,datastart
 
-    N = int.from_bytes(img[1028:1032],"little")
-    Nl = int.from_bytes(img[1040:1044],"little")
-    Ni = int.from_bytes(img[1036:1040],"little") // IPB + 1
-    Nm = N // (BSIZE * 8) + 1
-    Nd = N - (1 + 1 + Ni + Nl + Nm)
-    ninodes = int.from_bytes(img[1036:1040],"little")
+        N = int.from_bytes(img[1028:1032],"little")
+        Nl = int.from_bytes(img[1040:1044],"little")
+        Ni = int.from_bytes(img[1036:1040],"little") // IPB + 1
+        Nm = N // (BSIZE * 8) + 1
+        Nd = N - (1 + 1 + Ni + Nl + Nm)
+        ninodes = int.from_bytes(img[1036:1040],"little")
 
-    logstart = int.from_bytes(img[1044:1048],"little")
-    inodesstart = int.from_bytes(img[1048:1052],"little")
-    bmapstart = int.from_bytes(img[1052:1056],"little")
-    datastart = bmapstart + Nm
-    
-    for cm in command:
-        if cm[0] == cmd:
-            end = handler(eval(cm[1]),img,args[3:])
-
-    #except Exception:
-    #print(sys.exc_info()[0])
-    #exit()
-
+        logstart = int.from_bytes(img[1044:1048],"little")
+        inodesstart = int.from_bytes(img[1048:1052],"little")
+        bmapstart = int.from_bytes(img[1052:1056],"little")
+        datastart = bmapstart + Nm
+        
+        for cm in command:
+            if cm[0] == cmd:
+                end = handler(eval(cm[1]),img,args[3:])
+    except Exception:
+        print(sys.exc_info()[0])
+        end = 1
     os.close(img_fd)
     exit(end)
 
