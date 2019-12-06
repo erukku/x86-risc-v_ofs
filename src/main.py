@@ -1,5 +1,5 @@
 import sys,os,mmap,binascii,copy
-from struct import *
+
 
 magicfs = 0x10203040
 
@@ -381,7 +381,6 @@ def o_get(img,args):
     outpath = args[1]
     root_inode = iget(img,root_inode_number)
     addr,ip = ilookup(img, root_inode, root_inode_number,fspath)
-    print("{0} {1} {2} {3}".format(fspath,int.from_bytes(ip[:2],"little"),addr,int.from_bytes(ip[8:12],"little")))
     with open(outpath, "w") as f:
         st = ""
         for i in range(0,int.from_bytes(ip[8:12],"little"),SIZE_DE):
@@ -516,7 +515,7 @@ def o_info(img,args):
             if int.from_bytes(ip[12+i*4:12+(i+1)*4],"little") == 0:
                 break
             bcount += 1
-            print(" {0}".format(int.from_bytes(ip[12+i*4:12+(i+1)*4],"little")),end = "")
+            print(" {0}".format(int.from_bytes(ip[12+i*4:12+(i+1)*4],"little")),end="")
         iaddr = int.from_bytes(ip[12+NDIRECT*4:12+(NDIRECT+1)*4],"little")
         if iaddr != 0:
             bcount += 1
@@ -636,7 +635,7 @@ def o_rmdir(img,args):
     if not emptydir(img,ip):
         os.error("rmdir: {0}: non-empty directory".format(path))
         return 1
-    if iunlink(img, addr, path) < 0:
+    if iunlink(img, root_inode_number, path) < 0:
         os.error("rmdir: {0}: cannot unlink".format(path))
         return 1
     return 0
@@ -652,7 +651,7 @@ def ofs():
 
     img_file = args[1]
     cmd = args[2]
-
+    img_fd = 1
     try:
         img_fd = os.open(img_file,os.O_RDWR)
         
